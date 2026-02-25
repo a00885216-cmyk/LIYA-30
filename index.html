@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LIYA - HAB Detector</title>
+    
+    <!-- CDNs -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #b2f5ea;
+            background-image: linear-gradient(135deg, #e6fffa 0%, #b2f5ea 100%);
+            min-height: 100vh;
+            margin: 0;
+        }
+        .liya-header {
+            font-family: 'Montserrat', sans-serif;
+            letter-spacing: 0.1em;
+        }
+        @keyframes scan { 0% { top: 0; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
+        .animate-scan { 
+            position: absolute; 
+            width: 100%; 
+            height: 2px; 
+            background: linear-gradient(to right, transparent, #22d3ee, transparent); 
+            box-shadow: 0 0 15px #22d3ee; 
+            animation: scan 2s linear infinite; 
+            z-index: 30; 
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect, useCallback } = React;
+
+        // --- Configuration ---
+        const ROBOFLOW_API_KEY = "6JUDsfKEWcpncQBxqbfY";
+        const MODEL_ENDPOINT = "https://detect.roboflow.com/liya-y6tnm/11";
+        
+        // Integrated API Key
+        const INTERNAL_AI_KEY = "AIzaSyAxc9RaMi5JFE1U1Xhc6CorEVL27sytMxM"; 
+        
+        const CONFIDENCE_THRESHOLD = 0.01;
+        const HARMFUL_KEYWORDS = ['hab', 'bloom', 'contaminated', 'infected', 'cyanobacteria', 'algae', 'poison', 'parasite'];
+        const HAB_INFO_URL = "https://r7.bfar.da.gov.ph/red-tide/";
+
+        const LAGUNA_AGENCIES = [
+            { name: "Laguna Lake Development Authority (LLDA)", location: "Quezon City / Laguna", contact: "(02) 8376-4039" },
+            { name: "Bureau of Fisheries (BFAR) Region 4A", location: "Los Baños, Laguna", contact: "(049) 536-8200" },
+            { name: "DENR - PENRO Laguna", location: "Santa Cruz, Laguna", contact: "(049) 501-1424" },
+            { name: "PDRRMO Laguna", location: "Santa Cruz, Laguna", contact: "911 / (049) 501-1254" }
+        ];
+
+        // --- AI Logic ---
+        async function analyzeImage(base64Image) {
+            const cleanBase64 = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+
+            try {
+                // 1. Try Primary LIYA Model (Roboflow)
+                let rfData = null;
+                try {
+                    const roboflowUrl = `${MODEL_ENDPOINT}?api_key=${ROBOFLOW_API_KEY}&confidence=1`;
+                    const rfResponse = await fetch(roboflowUrl, {
+                        method: "POST",
+                        body: cleanBase64,
+                        headers: { "Content-Type": "application/x-www-form-urlencoded" }
+                    });
+                    if (rfResponse.ok) rfData = await rfResponse.json();
+                } catch (e) {
+                    console.warn("Primary model connection issue, switching to deep scan...");
+                }
+
+                if (rfData && rfData.predictions && rfData.predictions.length > 0) {
+                    const predictions = rfData.predictions.filter(p => p.confidence >= CONFIDENCE_THRESHOLD);
+                    if (predictions.length > 0) {
+                        const bestPred = predictions.sort((a, b) => b.confidence - a.confidence)[0];
+                        const className = bestPred.class.toLowerCase();
+                        const status = HARMFUL_KEYWORDS.some(word => className.includes(word)) ? 'Contaminated' : 'Safe';
+
+                        return {
+                            status,
+                            confidence: bestPred.confidence,
+                            location: "Binangonan, Rizal",
+                            primarySymptom: bestPred.class.replace(/-/g, ' ').toUpperCase(),
+                            description: status === 'Safe' 
+                                ? `LIYA Model identified the sample as ${bestPred.class}. No Harmful Algal Bloom indicators were found.`
+                                : `LIYA Model detected ${bestPred.class}. This indicates a high risk of Harmful Algal Bloom contamination based on physical indicators. Check for (damaged gills, irritated eye, discoloration)`,
+                            guidance: status === 'Safe'
+                                ? "Sample appears normal. However, always stay updated with the latest BFAR Red Tide Bulletins before consumption."
+                                : "DO NOT CONSUME. Report this sample to the nearest BFAR or LLDA station immediately.",
+                            timestamp: new Date().toLocaleString(),
+                            image: base64Image
+                        };
+                    }
+                }
+
+                // 2. LIYA Deep Scan (Silent Backup)
+                if (INTERNAL_AI_KEY) {
+                    const backupUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${INTERNAL_AI_KEY}`;
+                    const backupResponse = await fetch(backupUrl, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: "Identify the fish or aquatic sample in this image. Check for symptoms of Harmful Algal Bloom (HAB/Red Tide) such as: 1. Discoloration (reddish/brownish gills or scales), 2. Excessive slime/mucus, 3. Cloudy eyes, 4. Any unusual spots. Return JSON: { isFish: boolean, isContaminated: boolean, confidence: number, symptom: string, description: string }. If it's a fish part (like just gills), set isFish to true." },
+                                    { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } }
+                                ]
+                            }],
+                            generationConfig: { responseMimeType: "application/json" }
+                        })
+                    });
+
+                    const backupData = await backupResponse.json();
+                    if (backupData.candidates && backupData.candidates[0]) {
+                        const backupText = backupData.candidates[0].content.parts[0].text;
+                        const parsed = JSON.parse(backupText);
+
+                        if (parsed.isFish) {
+                            return {
+                                status: parsed.isContaminated ? 'Contaminated' : 'Safe',
+                                confidence: parsed.confidence,
+                                primarySymptom: parsed.symptom.toUpperCase(),
+                                description: parsed.description,
+                                guidance: parsed.isContaminated ? "DO NOT CONSUME. Report to BFAR/LLDA immediately." : "No visible Harmful Algal Bloom symptoms. Ensure thorough cooking.",
+                                location: "Laguna Lake Region",
+                                timestamp: new Date().toLocaleString(),
+                                image: base64Image
+                            };
+                        }
+                    }
+                }
+
+                return {
+                    status: 'No Fish Detected',
+                    confidence: 0,
+                    description: "No fish or Harmful Algal Bloom indicators were detected in the frame. Please ensure the sample is centered and well-lit.",
+                    guidance: "Please try scanning again. Position the fish clearly in the center of the frame.",
+                    timestamp: new Date().toLocaleString(),
+                    image: base64Image
+                };
+
+            } catch (err) {
+                console.error("Analysis Error:", err);
+                throw new Error("Analysis failed. Please check your internet connection.");
+            }
+        }
+
+        // --- UI Components ---
+        const CameraView = ({ onCapture, isAnalyzing, lastCapturedImage }) => {
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                async function start() {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                        if (videoRef.current) videoRef.current.srcObject = stream;
+                    } catch (e) { console.error(e); }
+                }
+                start();
+            }, []);
+
+            const capture = () => {
+                if (!videoRef.current || !canvasRef.current) return;
+                const canvas = canvasRef.current;
+                const video = videoRef.current;
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                onCapture(canvas.toDataURL('image/jpeg'));
+            };
+
+            return (
+                <div className="flex flex-col gap-4">
+                    <div className="relative w-full aspect-[4/3] bg-black shadow-lg overflow-hidden rounded-2xl border-4 border-white/20">
+                        <video ref={videoRef} autoPlay playsInline className={`w-full h-full object-cover ${isAnalyzing ? 'opacity-0' : 'opacity-100'}`} />
+                        {isAnalyzing && lastCapturedImage && <img src={lastCapturedImage} className="absolute inset-0 w-full h-full object-cover" />}
+                        <canvas ref={canvasRef} className="hidden" />
+                        {isAnalyzing && <div className="animate-scan"></div>}
+                        {isAnalyzing && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                                <div className="bg-white/10 p-6 rounded-full animate-pulse">
+                                    <div className="w-12 h-12 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex items-center justify-around py-6 bg-white/80 backdrop-blur-md rounded-3xl shadow-xl">
+                        <button onClick={() => fileInputRef.current.click()} className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center text-2xl shadow-inner">
+                            📁 <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => {
+                                const reader = new FileReader();
+                                reader.onload = (ev) => onCapture(ev.target.result);
+                                reader.readAsDataURL(e.target.files[0]);
+                            }} />
+                        </button>
+                        <button onClick={capture} disabled={isAnalyzing} className="w-20 h-20 bg-white border-8 border-gray-200 rounded-full shadow-2xl active:scale-90 transition-transform"></button>
+                        <div className="w-14 h-14"></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ResultDisplay = ({ result, onReset, onDownload }) => {
+            const isContaminated = result.status === 'Contaminated';
+            const isNoFish = result.status === 'No Fish Detected';
+
+            if (isNoFish) {
+                return (
+                    <div className="p-6 text-center">
+                        <div className="text-6xl mb-6">🔍</div>
+                        <h2 className="text-2xl font-black mb-4">NO FISH DETECTED</h2>
+                        <p className="text-gray-600 mb-8">{result.description}</p>
+                        <button onClick={onReset} className="w-full bg-black text-white py-4 rounded-2xl font-bold">TRY AGAIN</button>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-6 space-y-6 pb-24">
+                    <div className="relative rounded-2xl overflow-hidden shadow-2xl border-4 border-white">
+                        <img src={result.image} className="w-full aspect-[4/3] object-cover" />
+                        <div className={`absolute bottom-0 left-0 w-full p-3 text-white font-bold text-center ${isContaminated ? 'bg-red-600' : 'bg-emerald-600'}`}>
+                            {result.status.toUpperCase()}
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-5 rounded-2xl shadow-lg border border-gray-100">
+                        <div className="flex justify-between items-center mb-4">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Confidence</span>
+                            <span className="text-lg font-black">{(result.confidence * 100).toFixed(1)}%</span>
+                        </div>
+                        <h3 className={`text-xl font-black mb-2 ${isContaminated ? 'text-red-600' : 'text-emerald-600'}`}>{result.primarySymptom}</h3>
+                        <p className="text-sm text-gray-700 leading-relaxed">{result.description}</p>
+                    </div>
+
+                    <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl">
+                        <p className="text-[11px] text-blue-800 leading-tight">
+                            <span className="font-bold">⚠️ DISCLAIMER:</span> These predictions are based on visual indicators and are not 100% accurate. Definitive Algal Bloom contamination can only be confirmed through laboratory testing.
+                        </p>
+                    </div>
+
+                    <div className="space-y-4">
+                        <p className="font-bold text-sm">Safety Guidance: <span className={isContaminated ? 'text-red-600' : 'text-emerald-600'}>{result.guidance}</span></p>
+                        <div className="space-y-3">
+                            <p className="text-[10px] font-bold text-gray-400 uppercase">Reporting Agencies:</p>
+                            {LAGUNA_AGENCIES.map((a, i) => (
+                                <div key={i} className="flex justify-between text-[10px]">
+                                    <span className="font-bold">{a.name}</span>
+                                    <span className="font-black">{a.contact}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <button onClick={onDownload} className="w-full bg-[#4CAF50] text-white py-4 rounded-2xl font-bold shadow-lg">SAVE REPORT</button>
+                    <button onClick={onReset} className="w-full bg-gray-100 text-gray-800 py-4 rounded-2xl font-bold">SCAN ANOTHER</button>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [status, setStatus] = useState('IDLE');
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState(null);
+            const [lastImg, setLastImg] = useState(null);
+
+            const handleCapture = async (imageData) => {
+                setLastImg(imageData);
+                setStatus('ANALYZING');
+                setError(null);
+                try {
+                    const res = await analyzeImage(imageData);
+                    setResult(res);
+                    setStatus('SUCCESS');
+                } catch (err) {
+                    setError(err.message);
+                    setStatus('ERROR');
+                }
+            };
+
+            const downloadReport = () => {
+                const report = `
+LIYA - HAB DETECTION REPORT
+==========================
+Date/Time: ${result.timestamp}
+Location: ${result.location}
+Overall Status: ${result.status}
+Confidence: ${(result.confidence * 100).toFixed(1)}%
+
+INDICATORS DETECTED:
+- Primary Indicator: ${result.primarySymptom}
+- Description: ${result.description}
+
+GUIDANCE:
+- ${result.guidance}
+
+⚠️ IMPORTANT DISCLAIMER:
+This prediction is based on visual indicators analyzed by AI. 
+Algal bloom contamination can only be definitively detected in a laboratory. 
+Please treat this result as a preliminary assessment only.
+
+CONTACTS:
+- LLDA: (02) 8376-4039
+- BFAR: (049) 536-8200
+==========================`;
+                const blob = new Blob([report], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `LIYA_Report_${Date.now()}.txt`;
+                a.click();
+            };
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl flex flex-col relative">
+                    <header className="p-6 flex flex-col items-center border-b border-cyan-50">
+                        <h1 className="text-4xl font-black text-gray-900 tracking-widest liya-header">LIYA</h1>
+                        <p className="text-[10px] font-bold text-cyan-600 uppercase tracking-[0.3em] mt-1">HAB Detector</p>
+                    </header>
+
+                    <main className="flex-1 overflow-y-auto">
+                        {!result ? (
+                            <div className="p-6">
+                                <CameraView onCapture={handleCapture} isAnalyzing={status === 'ANALYZING'} lastCapturedImage={lastImg} />
+                                {error && <div className="mt-4 p-4 bg-red-50 text-red-600 text-xs rounded-xl border border-red-100">⚠️ {error}</div>}
+                            </div>
+                        ) : (
+                            <ResultDisplay result={result} onReset={() => setResult(null)} onDownload={downloadReport} />
+                        )}
+                    </main>
+
+                    <footer className="p-4 bg-cyan-50 border-t border-cyan-100 text-center">
+                        <a href={HAB_INFO_URL} target="_blank" className="text-xs font-bold text-cyan-800">Learn About Red Tide & HABs →</a>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
