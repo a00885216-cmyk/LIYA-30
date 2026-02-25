@@ -97,7 +97,7 @@
                             primarySymptom: bestPred.class.replace(/-/g, ' ').toUpperCase(),
                             description: status === 'Safe' 
                                 ? `LIYA Model identified the sample as ${bestPred.class}. No Harmful Algal Bloom indicators were found.`
-                                : `LIYA Model detected ${bestPred.class}. This indicates a high risk of Harmful Algal Bloom contamination based on physical indicators. Check for (damaged gills, irritated eye, discoloration)`,
+                                : `LIYA Model detected ${bestPred.class}. This indicates a high risk of Harmful Algal Bloom contamination based on physical indicators. Check for: damaged gills, irritated eye, discoloration of skin`,
                             guidance: status === 'Safe'
                                 ? "Sample appears normal. However, always stay updated with the latest BFAR Red Tide Bulletins before consumption."
                                 : "DO NOT CONSUME. Report this sample to the nearest BFAR or LLDA station immediately.",
